@@ -1,0 +1,63 @@
+name: Deploy an application's version in distant environment
+
+on:
+  workflow_dispatch:
+    inputs:
+      REF:
+        description: Branch to synchronize
+        type: string
+      SHA:
+        description: SHA to deploy
+        type: string
+
+jobs:
+  sync-app:
+    uses: ArnaudTA/actions/.github/workflows/sync.yaml@v1
+    secrets: 
+      GILTAB_PROJECT_NAME: ${{ vars.APP_PROJECT_NAME }}
+      GITLAB_TRIGGER_TOKEN: ${{ secrets.GITLAB_TRIGGER_TOKEN }}
+      GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+      GITLAB_URL: ${{ secrets.GITLAB_URL }}
+      GITLAB_MIRROR_ID: ${{ vars.MIRROR_PROJECT_ID }}
+    with:
+      BRANCH_NAME: ${{ inputs.REF }}
+      WAIT: true
+      SYNC_ALL: false
+
+  generate-timestamp:
+    needs: sync-app
+    runs-on: ubuntu-latest
+    outputs:
+      timestamp: ${{ steps.get-time.outputs.timestamp }}
+    steps:
+      - name: Get current UTC timestamp
+        id: get-time
+        run: |
+          timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "timestamp=$timestamp" >> "$GITHUB_OUTPUT"
+
+  wait-build:
+    needs: 
+      - generate-timestamp
+    uses: ArnaudTA/actions/.github/workflows/wait-pipeline.yaml@v1
+    secrets:
+      GITLAB_URL: ${{ secrets.GITLAB_URL }}
+      GITLAB_PROJECT_ID: ${{ vars.APP_PROJECT_ID }}
+      GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+    with:
+      REF: ${{ inputs.REF }}
+      SHA: ${{ inputs.SHA }}
+      CREATED_BEFORE: ${{ needs.generate-timestamp.outputs.timestamp }}
+      GRACE_PERIOD: 20
+
+  sync-charts:
+    needs: wait-build
+    uses: ArnaudTA/actions/.github/workflows/sync.yaml@v1
+    secrets: 
+      GILTAB_PROJECT_NAME: ${{ vars.CHARTS_PROJECT_NAME }}
+      GITLAB_TRIGGER_TOKEN: ${{ secrets.GITLAB_TRIGGER_TOKEN }}
+      GITLAB_URL: ${{ secrets.GITLAB_URL }}
+      GITLAB_MIRROR_ID: ${{ vars.MIRROR_PROJECT_ID }}
+    with:
+      WAIT: true
+      SYNC_ALL: true

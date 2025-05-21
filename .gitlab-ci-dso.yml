@@ -1,0 +1,60 @@
+# yaml-language-server: $schema=https://gitlab.com/gitlab-org/gitlab/-/raw/master/app/assets/javascripts/editor/schema/ci.json
+
+# DO NOT USE THIS STRATEGY it can lead to data loss or instability !!! this is exclusively to ease maintenance
+stages:
+  - init
+  - commit-changes
+
+get-token:
+  stage: init
+  image:
+    name: docker.io/hashicorp/vault:1.17.1
+  id_tokens:
+    VAULT_ID_TOKEN:
+      aud: $VAULT_SERVER_URL
+  before_script:
+    - export EXTRA_ARGS=""
+    - if [ ! -z $http_proxy ]; then export BUILD_ARGS="$BUILD_ARGS --build-arg http_proxy=$http_proxy"; fi
+  script:
+    - if [ ! -z $CA_BUNDLE ]; then
+        export VAULT_CACERT=$CA_BUNDLE;
+      fi
+    - export PROJECT_PATH=`echo "$CI_PROJECT_NAMESPACE" | awk -F '/' '{print $(NF)}'`
+    - export VAULT_ADDR=$VAULT_SERVER_URL
+    - export VAULT_TOKEN="$(vault write $EXTRA_VAULT_ARGS -field=token auth/jwt/login role=default-ci jwt=$VAULT_ID_TOKEN)"
+
+    - export GIT_USER=`vault kv get ${EXTRA_VAULT_ARGS} -field=GIT_OUTPUT_USER ${VAULT_KV}/${CI_PROJECT_NAMESPACE}/values-mirror`
+    - export GIT_TOKEN=`vault kv get ${EXTRA_VAULT_ARGS} -field=GIT_OUTPUT_PASSWORD ${VAULT_KV}/${CI_PROJECT_NAMESPACE}/values-mirror`
+    - |
+      cat <<EOF > vault.env
+      GIT_USER=$GIT_USER
+      GIT_TOKEN=$GIT_TOKEN
+      EOF
+  artifacts:
+    reports:
+      dotenv: vault.env
+    expire_in: 60 min 
+
+replace_domains:
+  stage: init
+  script:
+    - for f in values*.yaml; do sed -i "s/.your-host.tld/$ROOT_DOMAIN/g" $f; done
+  artifacts:
+    paths:
+      - values*.yaml
+    expire_in: "1 days"
+
+commit:
+  stage: commit-changes
+  interruptible: false
+  image: alpine:latest
+  only:
+    - main
+  before_script:
+  - apk add git
+  script:
+  - git config --global user.email "${GITLAB_USER_EMAIL}"
+  - git config --global user.name "${GITLAB_USER_NAME}"
+  - git add .
+  - git commit -m "Update values files"
+  - git push -o ci.skip https://$GIT_USER:$GIT_TOKEN@$CI_SERVER_HOST/$CI_PROJECT_PATH.git HEAD:main -f

@@ -1,0 +1,14 @@
+# Common values used in all your environment
+# Should not define variables defined in environment value files (ie: no tag is normal)
+
+image:
+  registry: harbor.your-host.tld
+  repository: pullcicd/app
+
+ingress:
+  enabled: true
+  className: nginx
+
+securityContext:
+  readOnlyRootFilesystem: false
+
